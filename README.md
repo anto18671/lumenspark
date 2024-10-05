@@ -32,11 +32,11 @@ The core of this project revolves around a **Linformer-based Transformer archite
    - The **Linformer architecture** reduces the quadratic complexity of self-attention to linear time. In traditional transformers, the self-attention mechanism has a time complexity of $O(n^2)$, where $n$ is the sequence length. Linformer addresses this issue by projecting the attention matrix into a lower dimension using **low-rank projections**, which reduces the overall memory and computational load to $O(n)$.
 
    - In the standard transformer, the self-attention is computed as:
-   - $Q \in \mathbb{R}^{n \times d}$ are the queries,
-   - $K \in \mathbb{R}^{n \times d}$ are the keys,
-   - $V \in \mathbb{R}^{n \times d}$ are the values, and
-   - $d_k$ is the dimension of the keys/queries.
-   - Linformer modifies this by introducing a projection matrix $P \in \mathbb{R}^{n \times k}$, reducing the dimension of $K$ and $V$: $$K' = K P, \quad V' = V P$$
+     - $Q \in \mathbb{R}^{n \times d}$ are the queries,
+     - $K \in \mathbb{R}^{n \times d}$ are the keys,
+     - $V \in \mathbb{R}^{n \times d}$ are the values, and
+     - $d_k$ is the dimension of the keys/queries.
+     - Linformer modifies this by introducing a projection matrix $P \in \mathbb{R}^{n \times k}$, reducing the dimension of $K$ and $V$: $$K' = K P, \quad V' = V P$$
 
 $$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^\top}{\sqrt{d_k}}\right)V$$
 
@@ -56,7 +56,7 @@ $$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^\top}{\sqrt{d_k}}\ri
 
    - $X \in \mathbb{R}^{n \times d}$ is the input sequence, and $W_Q, W_K, W_V \in \mathbb{R}^{d \times d}$ are learned projection matrices.
 
-   - The attention operation is computed as:
+   - The attention operation is computed as.
 
    - $K' = KP$ and $V' = VP$, reducing the computational complexity to $O(n \cdot k \cdot d)$.
 
@@ -66,7 +66,7 @@ $$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^\top}{\sqrt{d_k}}\ri
 
    - Each transformer block includes a **Feed-Forward Neural Network (FFN)** that follows the attention layer. In this implementation, the FFN is factorized using **LowRankLinear** layers, reducing the computational burden of the FFN while maintaining performance.
 
-   - The FFN consists of two linear layers with a GELU non-linearity:
+   - The FFN consists of two linear layers with a GELU non-linearity.
 
    - Instead of directly projecting from $d$ to $d$, the factorized layers project from $d$ to $r$ and back to $d$, where $r$ is the reduced rank.
 
@@ -74,7 +74,7 @@ $$\text{FFN}(x) = W_2 \, \text{GELU}(W_1 x)$$
 
 5. **RMSNorm for Normalization:**
 
-   - The architecture uses **Root Mean Square Layer Normalization (RMSNorm)** instead of the traditional **LayerNorm**. RMSNorm normalizes each vector $x \in \mathbb{R}^{d}$ using the root mean square of its elements:
+   - The architecture uses **Root Mean Square Layer Normalization (RMSNorm)** instead of the traditional **LayerNorm**. RMSNorm normalizes each vector $x \in \mathbb{R}^{d}$ using the root mean square of its elements.
 
    - RMSNorm is computationally cheaper than LayerNorm and avoids computing mean and variance.
 
