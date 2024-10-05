@@ -358,7 +358,7 @@ def main():
     VOCAB_SIZE = 50257
     LEARNING_RATE = 1.25e-4
     WEIGHT_DECAY = 1e-2
-    EPOCHS = 5
+    EPOCHS = 4
     K = 256
 
     # ----------------------------
@@ -431,7 +431,6 @@ def main():
         warmup_steps=1024,
         remove_unused_columns=False,
         dataloader_num_workers=16,
-        tf32=True,
         run_name="Linformer-OpenWebText-Training"
     )
 
