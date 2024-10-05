@@ -368,9 +368,9 @@ def main():
     print(f"Using device: {device}")
 
     # ----------------------------
-    # Load Dataset (OpenWebText, BookCorpus and Reddit)
+    # Load Dataset (OpenWebText and BookCorpus)
     # ----------------------------
-    print("Loading OpenWebText, BookCorpus and Reddit datasets...")
+    print("Loading OpenWebText and BookCorpus datasets...")
 
     # Load OpenWebText dataset
     openwebtext_dataset = load_dataset("openwebtext", split="train")
@@ -378,11 +378,8 @@ def main():
     # Load 25% of BookCorpus
     bookcorpus_dataset = load_dataset("bookcorpus", split="train[:25%]")
 
-    # Load 10% of the Reddit dataset
-    reddit_dataset = load_dataset("reddit", split="train[:10%]")
-
     # Combine all datasets
-    combined_dataset = concatenate_datasets([openwebtext_dataset, bookcorpus_dataset, reddit_dataset])
+    combined_dataset = concatenate_datasets([openwebtext_dataset, bookcorpus_dataset])
     
     # Shuffle the combined dataset
     combined_dataset = combined_dataset.shuffle(seed=42)
