@@ -1,10 +1,10 @@
-from transformers import Trainer, TrainingArguments, PreTrainedModel, PretrainedConfig, GPT2Tokenizer, TrainerCallback, DefaultFlowCallback
+from transformers import Trainer, TrainingArguments, PreTrainedModel, PretrainedConfig, GPT2Tokenizer, TrainerCallback, GenerationConfig
 from datasets import load_dataset, concatenate_datasets
 import matplotlib.pyplot as plt
 from functools import partial
 from torch import nn
-import random
 import torch
+import os
 
 # ----------------------------
 # Custom Callback for Logging Losses
@@ -12,35 +12,47 @@ import torch
 
 class LossLoggerCallback(TrainerCallback):
     """
-    A custom callback to log the loss during training and save the plot at regular intervals,
-    as well as save the final loss plot after training.
+    A custom callback to log the loss during training, save the plot at regular intervals,
+    and evaluate the model by generating text from predefined prompts.
     """
-    def __init__(self, plot_save_path="training_loss_plot.png", save_interval=512):
+    def __init__(self, plot_save_path="training_loss_plot.png", plot_interval=512, eval_interval=128, prompts=None, tokenizer=None):
         super().__init__()
         self.losses = []
-        self.steps = []  # To keep track of steps
+        self.steps = []
         self.plot_save_path = plot_save_path
-        self.save_interval = save_interval
+        self.plot_interval = plot_interval
+        self.eval_interval = eval_interval
+        self.prompts = prompts if prompts is not None else []
+        self.tokenizer = tokenizer
 
     def on_log(self, args, state, control, logs=None, **kwargs):
         """
         This method is called during logging events, allowing us to extract the loss values.
-        It will also save the plot every `save_interval` steps.
+        It will also save the plot every `save_interval` steps and evaluate the model every `eval_interval` steps.
         """
         if 'loss' in logs:
             self.losses.append(logs['loss'])
             self.steps.append(state.global_step)
 
             # Save the plot periodically
-            if state.global_step % self.save_interval == 0:
+            if state.global_step % self.plot_interval == 0:
                 self.save_loss_plot()
+
+            # Perform evaluation periodically
+            if state.global_step % self.eval_interval == 0:
+                print(f"\nPerforming evaluation at step {state.global_step}...")
+                self.evaluate_model(kwargs['model'], self.tokenizer)
 
     def on_train_end(self, args, state, control, **kwargs):
         """
-        Save the final plot when the training ends.
+        Save the final plot and perform the final evaluation when the training ends.
         """
-        print("Saving the final loss plot after training...")
+        print("\nSaving the final loss plot after training...")
         self.save_loss_plot()
+
+        # Perform the final evaluation
+        print("\nPerforming final evaluation...")
+        self.evaluate_model(kwargs['model'], self.tokenizer)
 
     def save_loss_plot(self):
         """
@@ -57,17 +69,52 @@ class LossLoggerCallback(TrainerCallback):
         plt.savefig(self.plot_save_path)
         plt.close()
 
+    def evaluate_model(self, model, tokenizer):
+        """
+        Evaluate the model by generating text from predefined prompts.
+        """
+        model.eval()
+        device = next(model.parameters()).device
+
+        print("\nEvaluating model by generating text from prompts:")
+        for prompt in self.prompts:
+            input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
+
+            with torch.no_grad():
+                output = model.generate(
+                    input_ids, 
+                    max_length=50,
+                    temperature=0.7,
+                    top_p=0.9,
+                    do_sample=True
+                )
+
+            generated_text = tokenizer.decode(output[0], skip_special_tokens=True)
+
+            print(f"\nPrompt: {prompt}")
+            print(f"Generated: {generated_text}")
+            print("-" * 50)
+
+        print("\nEvaluation complete.\n")
+
 # ----------------------------
 # Define Linformer Configuration
 # ----------------------------
 
 class LinformerConfig(PretrainedConfig):
-    """
-    Configuration class for Linformer.
-    """
     model_type = "linformer"
 
-    def __init__(self, vocab_size, embed_dim, depth, heads, seq_length, dropout, k, **kwargs):
+    def __init__(
+        self,
+        seq_length=512,
+        vocab_size=50257,
+        embed_dim=512,
+        depth=6,
+        heads=4,
+        dropout=0.1,
+        k=128,
+        **kwargs
+    ):
         super().__init__(**kwargs)
         self.vocab_size = vocab_size
         self.embed_dim = embed_dim
@@ -76,6 +123,19 @@ class LinformerConfig(PretrainedConfig):
         self.seq_length = seq_length
         self.dropout = dropout
         self.k = k
+
+    def to_dict(self):
+        output = super().to_dict()
+        output.update({
+            "vocab_size": self.vocab_size,
+            "embed_dim": self.embed_dim,
+            "depth": self.depth,
+            "heads": self.heads,
+            "seq_length": self.seq_length,
+            "dropout": self.dropout,
+            "k": self.k
+        })
+        return output
 
 # ----------------------------
 # Low-Rank Linear Layer Implementation
@@ -232,6 +292,77 @@ class LinformerModel(PreTrainedModel):
         # Initialize weights
         self.init_weights()
 
+        # Create GenerationConfig instance
+        self.generation_config = GenerationConfig(
+            max_length=128,
+            min_length=16,
+        )
+
+    def top_k_top_p_filtering(logits, top_k=0, top_p=1.0, filter_value=-float('Inf')):
+        """
+        Filter a distribution of logits using top-k and/or top-p filtering.
+        """
+        top_k = min(top_k, logits.size(-1))  # Safety check
+        if top_k > 0:
+            indices_to_remove = logits < torch.topk(logits, top_k)[0][..., -1, None]
+            logits[indices_to_remove] = filter_value
+
+        if top_p < 1.0:
+            sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+            cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+
+            sorted_indices_to_remove = cumulative_probs > top_p
+            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+            sorted_indices_to_remove[..., 0] = 0
+
+            indices_to_remove = sorted_indices[sorted_indices_to_remove]
+            logits[:, indices_to_remove] = filter_value
+        return logits
+
+    def generate(self, input_ids, max_length=128, min_length=16, temperature=1.0, top_k=50, top_p=0.95, do_sample=True):
+        generated_tokens = input_ids
+
+        for _ in range(max_length - input_ids.size(1)):
+            outputs = self.forward(input_ids=generated_tokens)
+            logits = outputs["logits"][:, -1, :]
+            logits = logits / temperature
+            
+            if do_sample:
+                # Pass the top_k and top_p values only once
+                filtered_logits = LinformerModel.top_k_top_p_filtering(logits, top_k=top_k, top_p=top_p)
+                probs = torch.softmax(filtered_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+            else:
+                next_token = torch.argmax(logits, dim=-1, keepdim=True)
+            
+            generated_tokens = torch.cat((generated_tokens, next_token), dim=1)
+            
+            if next_token.item() == self.config.eos_token_id:
+                break
+        
+        return generated_tokens
+
+    def save_pretrained(self, save_directory, **kwargs):
+        # Save model configuration and weights
+        self.config.save_pretrained(save_directory)
+        torch.save(self.state_dict(), f"{save_directory}/pytorch_model.bin")
+        
+        # Save generation configuration separately
+        self.generation_config.save_pretrained(save_directory)
+
+    @classmethod
+    def from_pretrained(cls, load_directory, **kwargs):
+        config = LinformerConfig.from_pretrained(load_directory)
+        model = cls(config)
+        model.load_state_dict(torch.load(f"{load_directory}/pytorch_model.bin"))
+
+        # Load generation configuration if available
+        generation_config_path = f"{load_directory}/generation_config.json"
+        if os.path.exists(generation_config_path):
+            model.generation_config = GenerationConfig.from_pretrained(load_directory)
+        
+        return model
+
     def forward(self, input_ids, attention_mask=None, labels=None):
         batch_size, seq_length = input_ids.size()
 
@@ -285,28 +416,6 @@ def count_parameters(model):
     print(f"Total Parameters: {total_params:,}")
     print(f"Trainable Parameters: {trainable_params:,}")
     print(f"Non-trainable Parameters: {non_trainable_params:,}")
-    
-# ----------------------------
-# Random Delete and Swap Operations
-# ----------------------------
-
-def random_delete(input_ids, delete_prob=0.05):
-    """
-    Randomly deletes tokens from the input sequence based on a specified probability.
-    """
-    if random.random() < delete_prob:
-        delete_idx = random.randint(1, input_ids.size(1) - 2)
-        input_ids = torch.cat([input_ids[:, :delete_idx], input_ids[:, delete_idx + 1:]], dim=1)
-    return input_ids
-
-def random_swap(input_ids, swap_prob=0.05):
-    """
-    Randomly swaps two tokens in the input sequence based on a specified probability.
-    """
-    if random.random() < swap_prob:
-        idx1, idx2 = random.sample(range(1, input_ids.size(1) - 1), 2)
-        input_ids[:, idx1], input_ids[:, idx2] = input_ids[:, idx2], input_ids[:, idx1]
-    return input_ids
 
 # ----------------------------
 # Data Collator for Dynamic Chunking
@@ -330,10 +439,6 @@ def dynamic_chunking_collator(features, sequence_length, tokenizer, delete_prob=
 
     input_ids = tokenized['input_ids']
     attention_mask = tokenized['attention_mask']
-
-    # Apply random delete and swap operations
-    input_ids = random_delete(input_ids, delete_prob=delete_prob)
-    input_ids = random_swap(input_ids, swap_prob=swap_prob)
 
     return {
         'input_ids': input_ids,
@@ -421,6 +526,19 @@ def main():
     count_parameters(model)
 
     # ----------------------------
+    # Define Evaluation Prompts
+    # ----------------------------
+    prompts = [
+        "Once upon a time in a land far, far away,",
+        "In the future, artificial intelligence will",
+        "The year is 2050, and humans have colonized Mars. The first colonists",
+        "The world's largest volcano erupted, causing",
+        "The secret to happiness is",
+        "The president of the United States",
+        "In a galaxy far, far away, a lone spaceship",
+    ]
+
+    # ----------------------------
     # Define Training Arguments
     # ----------------------------
     
@@ -434,12 +552,13 @@ def main():
         weight_decay=WEIGHT_DECAY,
         logging_dir="./logs",
         logging_steps=16,
-        save_steps=2048,
+        save_steps=1024,
         save_total_limit=8,
         warmup_steps=1024,
         remove_unused_columns=False,
         dataloader_num_workers=16,
-        run_name="Linformer-OpenWebText-Training"
+        run_name="Linformer-OpenWebText-Training",
+        max_grad_norm=1.0,
     )
 
     # ----------------------------
@@ -451,7 +570,14 @@ def main():
         args=training_args,
         train_dataset=combined_dataset,
         data_collator=partial(dynamic_chunking_collator, sequence_length=SEQ_LEN, tokenizer=tokenizer),
-        callbacks=[LossLoggerCallback(), DefaultFlowCallback()],
+        callbacks=[
+        LossLoggerCallback(
+            prompts=prompts,
+            tokenizer=tokenizer,
+            plot_interval=512,
+            eval_interval=128,
+        )
+    ],
     )
 
     # ----------------------------
