@@ -140,8 +140,8 @@ class LinformerSelfAttention(nn.Module):
 
         # Apply low-rank linear projections
         self.query_transform = nn.Sequential(
-            LowRankLinear(embed_dim, embed_dim // 4, rank=32),
-            nn.Linear(embed_dim // 4, self.head_dim * num_heads)
+            LowRankLinear(embed_dim, embed_dim // 2, rank=32),
+            nn.Linear(embed_dim // 2, self.head_dim * num_heads)
         )
         kv_size = self.head_dim if single_kv_head else (self.head_dim * num_heads)
         self.key_transform = nn.Linear(embed_dim, kv_size, bias=False)
@@ -246,9 +246,9 @@ class LinformerModel(PreTrainedModel):
                 ),
                 "norm1": RMSNorm(config.embed_dim),
                 "ffn": nn.Sequential(
-                    LowRankLinear(config.embed_dim, config.embed_dim // 4, rank=32),
+                    LowRankLinear(config.embed_dim, config.embed_dim // 2, rank=32),
                     nn.GELU(),
-                    LowRankLinear(config.embed_dim // 4, config.embed_dim, rank=32),
+                    LowRankLinear(config.embed_dim // 2, config.embed_dim, rank=32),
                     nn.Dropout(config.dropout)
                 ),
                 "norm2": RMSNorm(config.embed_dim)
@@ -389,9 +389,9 @@ def main():
     # Hyperparameters
     # ----------------------------
     
-    SEQ_LEN = 768
-    BATCH_SIZE = 32
-    GRADIENT_ACCUMULATION = 16
+    SEQ_LEN = 512
+    BATCH_SIZE = 48
+    GRADIENT_ACCUMULATION = 10
     DROPOUT = 0.1
     EMBED_SIZE = 512
     NUM_HEADS = 4
@@ -400,7 +400,7 @@ def main():
     LEARNING_RATE = 1.25e-4
     WEIGHT_DECAY = 1e-2
     EPOCHS = 4
-    K = 256
+    K = 128
 
     # ----------------------------
     # Device Configuration
