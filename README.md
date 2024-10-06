@@ -12,7 +12,6 @@ This repository contains the code and configuration to train a transformer-based
 - [Usage](#usage)
 - [Training the Model](#training-the-model)
 - [Saving and Loading the Model](#saving-and-loading-the-model)
-- [Configuration Options](#configuration-options)
 - [License](#license)
 
 ## Introduction
@@ -127,11 +126,25 @@ The model architecture is highly configurable through several hyperparameters:
 
 - **`heads`**: Number of attention heads (default: 4).
 
-- **`seq_length`**: Maximum sequence length (default: 768).
+- **`seq_length`**: Maximum sequence length (default: 512).
 
 - **`dropout`**: Dropout rate applied throughout the network (default: 0.1).
 
-- **`k`**: The projection dimension for the low-rank attention (default: 256).
+- **`k`**: The projection dimension for the low-rank attention (default: 128).
+
+- **`batch_size`**: Training batch size per device (default: 48).
+
+- **`gradient_accumulation_steps`**: Steps for gradient accumulation before an update (default: 10).
+
+- **`learning_rate`**: Initial learning rate for the optimizer (default: 1.25e-4).
+
+- **`weight_decay`**: Weight decay used to prevent overfitting (default: 1e-2).
+
+- **`epochs`**: Number of training epochs (default: 4).
+
+---
+
+This section reflects the updated parameter values.
 
 ### Attention Complexity Breakdown
 
@@ -188,6 +201,26 @@ source env/bin/activate
 pip install -r requirements.txt
 ```
 
+## Docker Usage
+
+If you prefer using Docker to set up the environment and avoid dependency issues, follow these steps to run the project in a Docker container:
+
+### **Using Prebuilt Docker Image from GitHub Container Registry**:
+
+Alternatively, you can pull the prebuilt image from GitHub Container Registry and run it without building the image locally.
+
+```bash
+docker pull ghcr.io/anto18671/lumenspark:latest
+```
+
+Then, run the image:
+
+```bash
+docker run --gpus all ghcr.io/anto18671/lumenspark:latest
+```
+
+This approach ensures that your development environment is consistent and isolated from any external dependencies.
+
 ## Usage
 
 ### Training the Model
@@ -223,60 +256,6 @@ print(tokenizer.decode(outputs[0], skip_special_tokens=True))
 ```
 
 This snippet loads the model and tokenizer, and generates a short text continuation given an initial prompt ("Once upon a time").
-
-## Configuration Options
-
-The training process and model can be customized through various hyperparameters. Below are some of the key configuration options that can be modified in the `main()` function:
-
-- **`SEQ_LEN`**: Controls the maximum sequence length for each input. Longer sequences can capture more context but require more memory.
-
-```python
-SEQ_LEN = 768
-```
-
-- **`BATCH_SIZE`**: Determines how many samples are processed at once in each training step.
-
-```python
-BATCH_SIZE = 32
-```
-
-- **`EMBED_SIZE`**: Dimensionality of the token and positional embeddings. A higher embed size can improve expressiveness but increases the model size.
-
-```python
-EMBED_SIZE = 512
-```
-
-- **`NUM_HEADS`**: Number of attention heads in the multi-head attention mechanism.
-
-```python
-NUM_HEADS = 4
-```
-
-- **`NUM_LAYERS`**: Number of transformer layers in the model. More layers can increase the depth and complexity of the model but require more computational resources.
-
-```python
-NUM_LAYERS = 6
-```
-
-- **`DROPOUT`**: Dropout rate used to prevent overfitting during training. It helps regularize the model by randomly dropping neurons during training.
-
-```python
-DROPOUT = 0.1
-```
-
-- **`LEARNING_RATE`**: The initial learning rate for the optimizer. A smaller learning rate can lead to more stable training but slower convergence.
-
-```python
-LEARNING_RATE = 1.25e-4
-```
-
-- **`WEIGHT_DECAY`**: Weight decay is used to prevent overfitting by penalizing large weights.
-
-```python
-WEIGHT_DECAY = 1e-2
-```
-
-You can modify these hyperparameters directly in the `main()` function or pass them as command-line arguments when launching the training script.
 
 ## Training Performance
 

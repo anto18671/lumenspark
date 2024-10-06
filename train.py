@@ -416,10 +416,10 @@ def main():
     print("Loading OpenWebText and BookCorpus datasets...")
 
     # Load OpenWebText dataset
-    openwebtext_dataset = load_dataset("openwebtext", split="train")
+    openwebtext_dataset = load_dataset("openwebtext", split="train", trust_remote_code=True)
 
     # Load 25% of BookCorpus
-    bookcorpus_dataset = load_dataset("bookcorpus", split="train[:25%]")
+    bookcorpus_dataset = load_dataset("bookcorpus", split="train[:25%]", trust_remote_code=True)
 
     # Combine all datasets
     combined_dataset = concatenate_datasets([openwebtext_dataset, bookcorpus_dataset])
