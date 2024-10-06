@@ -18,6 +18,7 @@ class LossLoggerCallback(TrainerCallback):
     def __init__(self, plot_save_path="training_loss_plot.png", save_interval=512):
         super().__init__()
         self.losses = []
+        self.steps = []  # To keep track of steps
         self.plot_save_path = plot_save_path
         self.save_interval = save_interval
 
@@ -28,6 +29,7 @@ class LossLoggerCallback(TrainerCallback):
         """
         if 'loss' in logs:
             self.losses.append(logs['loss'])
+            self.steps.append(state.global_step)
 
             # Save the plot periodically
             if state.global_step % self.save_interval == 0:
@@ -42,10 +44,10 @@ class LossLoggerCallback(TrainerCallback):
 
     def save_loss_plot(self):
         """
-        Save the plot of the logged losses to a file.
+        Save the plot of the logged losses to a file, plotting against actual steps.
         """
         plt.figure(figsize=(10, 6))
-        plt.plot(self.losses, label="Training Loss")
+        plt.plot(self.steps, self.losses, label="Training Loss")
         plt.yscale('log')
         plt.xlabel("Training Steps")
         plt.ylabel("Loss (log scale)")
@@ -74,7 +76,39 @@ class LinformerConfig(PretrainedConfig):
         self.seq_length = seq_length
         self.dropout = dropout
         self.k = k
-        
+
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        """
+        Override this method to ensure that all configuration parameters are 
+        properly initialized during loading.
+        """
+        config = super(LinformerConfig, cls).from_pretrained(*args, **kwargs)
+        return config
+
+    def save_pretrained(self, save_directory):
+        """
+        Override the save_pretrained method to include all required configuration 
+        parameters when saving the model's config.
+        """
+        self.save_to_json_file(self.to_dict(), save_directory)
+
+    def to_dict(self):
+        """
+        Return a dictionary with all required attributes for saving.
+        """
+        output = super().to_dict()
+        output.update({
+            "vocab_size": self.vocab_size,
+            "embed_dim": self.embed_dim,
+            "depth": self.depth,
+            "heads": self.heads,
+            "seq_length": self.seq_length,
+            "dropout": self.dropout,
+            "k": self.k,
+        })
+        return output
+
 # ----------------------------
 # Low-Rank Linear Layer Implementation
 # ----------------------------
@@ -106,8 +140,8 @@ class LinformerSelfAttention(nn.Module):
 
         # Apply low-rank linear projections
         self.query_transform = nn.Sequential(
-            LowRankLinear(embed_dim, embed_dim // 3, rank=48),
-            nn.Linear(embed_dim // 3, self.head_dim * num_heads)
+            LowRankLinear(embed_dim, embed_dim // 4, rank=32),
+            nn.Linear(embed_dim // 4, self.head_dim * num_heads)
         )
         kv_size = self.head_dim if single_kv_head else (self.head_dim * num_heads)
         self.key_transform = nn.Linear(embed_dim, kv_size, bias=False)
@@ -212,12 +246,11 @@ class LinformerModel(PreTrainedModel):
                 ),
                 "norm1": RMSNorm(config.embed_dim),
                 "ffn": nn.Sequential(
-                    LowRankLinear(config.embed_dim, config.embed_dim // 3, rank=48),
+                    LowRankLinear(config.embed_dim, config.embed_dim // 4, rank=32),
                     nn.GELU(),
-                    LowRankLinear(config.embed_dim // 3, config.embed_dim, rank=48),
+                    LowRankLinear(config.embed_dim // 4, config.embed_dim, rank=32),
                     nn.Dropout(config.dropout)
                 ),
-                
                 "norm2": RMSNorm(config.embed_dim)
             }) for _ in range(config.depth)
         ])
@@ -268,6 +301,13 @@ class LinformerModel(PreTrainedModel):
             loss = loss_fct(shift_logits, shift_labels)
 
         return {"loss": loss, "logits": logits}
+
+    def save_pretrained(self, save_directory):
+        """
+        Override save_pretrained to ensure correct behavior when saving the model.
+        """
+        self.config.save_pretrained(save_directory)
+        torch.save(self.state_dict(), f"{save_directory}/pytorch_model.bin")
 
 # ----------------------------
 # Utility Function to Count Parameters
@@ -348,6 +388,7 @@ def main():
     # ----------------------------
     # Hyperparameters
     # ----------------------------
+    
     SEQ_LEN = 768
     BATCH_SIZE = 32
     GRADIENT_ACCUMULATION = 16
@@ -364,12 +405,14 @@ def main():
     # ----------------------------
     # Device Configuration
     # ----------------------------
+    
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
 
     # ----------------------------
     # Load Dataset (OpenWebText and BookCorpus)
     # ----------------------------
+    
     print("Loading OpenWebText and BookCorpus datasets...")
 
     # Load OpenWebText dataset
@@ -387,6 +430,7 @@ def main():
     # ----------------------------
     # Load Tokenizer
     # ----------------------------
+    
     print("Loading GPT-2 tokenizer...")
     tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
 
@@ -396,6 +440,7 @@ def main():
     # ----------------------------
     # Initialize Linformer Model
     # ----------------------------
+    
     print("Initializing Linformer model...")
     config = LinformerConfig(
         vocab_size=VOCAB_SIZE,
@@ -411,11 +456,13 @@ def main():
     # ----------------------------
     # Count Model Parameters
     # ----------------------------
+    
     count_parameters(model)
 
     # ----------------------------
     # Define Training Arguments
     # ----------------------------
+    
     training_args = TrainingArguments(
         output_dir="./results",
         overwrite_output_dir=True,
@@ -437,6 +484,7 @@ def main():
     # ----------------------------
     # Initialize Trainer with Dynamic Chunking
     # ----------------------------
+    
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -448,12 +496,14 @@ def main():
     # ----------------------------
     # Start Training
     # ----------------------------
+    
     print("Starting training...")
     trainer.train()
 
     # ----------------------------
     # Save the Final Model
     # ----------------------------
+    
     print("Saving the final model...")
     trainer.save_model("./final_model")
     tokenizer.save_pretrained("./final_model")
