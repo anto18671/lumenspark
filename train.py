@@ -165,7 +165,7 @@ def main():
     LEARNING_RATE = 1.25e-4  # Learning rate
     WEIGHT_DECAY = 1e-2  # Weight decay for regularization
     EPOCHS = 4  # Number of training epochs
-    K = 128  # Low-rank projection dimension for Linformer-like attention
+    K = 256  # Low-rank projection dimension for Linformer-like attention
 
     # ----------------------------
     # Device Configuration

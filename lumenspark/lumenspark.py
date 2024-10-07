@@ -21,7 +21,7 @@ class LumensparkConfig(PretrainedConfig):
         depth=6,
         heads=4,
         dropout=0.1,
-        k=128,
+        k=256,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -106,7 +106,7 @@ class LumensparkSelfAttention(nn.Module):
             self.value_transform = nn.Linear(embed_dim, kv_size, bias=False)
             self.value_proj = nn.Parameter(self.initialize_proj_matrix(max_seq_len, proj_dim))
 
-        self.dropout_layer = nn.Dropout(dropout)  # Dropout for regularization
+        self.dropout_layer = nn.Dropout(dropout)
         self.output_transform = nn.Linear(self.head_dim * num_heads, embed_dim)
 
     def initialize_proj_matrix(self, rows, cols):
@@ -245,16 +245,22 @@ class LumensparkModel(PreTrainedModel):
             logits[:, indices_to_remove] = filter_value
         return logits
 
-    def generate(self, input_ids, max_length=128, min_length=16, temperature=1.0, top_k=50, top_p=0.95, do_sample=True):
+    def generate(self, input_ids, max_length=128, min_length=16, temperature=0.6, top_k=50, top_p=0.9, repetition_penalty=1.1, do_sample=True):
         """
-        Text generation method that handles auto-regressive generation.
+        Text generation method that handles auto-regressive generation with repetition penalty.
         """
         generated_tokens = input_ids
 
         for _ in range(max_length - input_ids.size(1)):
             outputs = self.forward(input_ids=generated_tokens)
             logits = outputs["logits"][:, -1, :]
+
+            # Adjust temperature for randomness
             logits = logits / temperature
+
+            # Apply repetition penalty: reduce logits of tokens that have already been generated
+            for token in set(generated_tokens.view(-1).tolist()):
+                logits[:, token] /= repetition_penalty  # Penalize repeated tokens
 
             # Apply top-k and top-p sampling to select the next token
             if do_sample:
@@ -309,7 +315,17 @@ class LumensparkModel(PreTrainedModel):
             shift_logits = logits[:, :-1, :].contiguous().view(-1, self.config.vocab_size)
             shift_labels = labels[:, 1:].contiguous().view(-1)
 
+            # Base cross-entropy loss
             loss_fct = nn.CrossEntropyLoss()
-            loss = loss_fct(shift_logits, shift_labels)
+            base_loss = loss_fct(shift_logits, shift_labels)
+
+            # Repetition penalty
+            rep_penalty = 0
+            for i in range(batch_size):
+                token_counts = torch.bincount(input_ids[i].view(-1))
+                rep_penalty += (token_counts > 1).sum().float()
+
+            # Add repetition penalty to the loss
+            loss = base_loss + (0.01 * rep_penalty)
 
         return {"loss": loss, "logits": logits}
