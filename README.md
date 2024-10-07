@@ -1,6 +1,6 @@
 # Linformer-based Language Model Training from Scratch
 
-This repository contains the code and configuration to train a transformer-based language model using a custom Linformer architecture, trained on datasets such as OpenWebText, BookCorpus, and Reddit. The model is trained from the ground up, incorporating a custom attention mechanism and dynamic chunking for optimal training performance on large-scale language datasets.
+This repository contains the code and configuration to train a transformer-based language model using a custom Linformer architecture, trained on datasets such as OpenWebText and BookCorpus. The model is trained from the ground up, incorporating a custom attention mechanism and dynamic chunking for optimal training performance on large-scale language datasets.
 
 ## Table of Contents
 
@@ -162,7 +162,7 @@ This reduction in complexity makes Linformer suitable for longer sequences while
 
 The training pipeline includes:
 
-1.  **Dataset Loading:** The model is trained on a combination of OpenWebText, BookCorpus, and Reddit datasets, dynamically chunked for efficient sequence sampling.
+1.  **Dataset Loading:** The model is trained on a combination of OpenWebText and BookCorpus datasets, dynamically chunked for efficient sequence sampling.
 
 2.  **Loss Logging:** A custom callback logs and visualizes the training loss, periodically saving the loss curve to a file.
 

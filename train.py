@@ -1,4 +1,4 @@
-from transformers import Trainer, TrainingArguments, PreTrainedModel, PretrainedConfig, GPT2Tokenizer, TrainerCallback
+from transformers import Trainer, TrainingArguments, PreTrainedModel, PretrainedConfig, GPT2Tokenizer, TrainerCallback, DefaultFlowCallback
 from datasets import load_dataset, concatenate_datasets
 import matplotlib.pyplot as plt
 from functools import partial
@@ -76,38 +76,6 @@ class LinformerConfig(PretrainedConfig):
         self.seq_length = seq_length
         self.dropout = dropout
         self.k = k
-
-    @classmethod
-    def from_pretrained(cls, *args, **kwargs):
-        """
-        Override this method to ensure that all configuration parameters are 
-        properly initialized during loading.
-        """
-        config = super(LinformerConfig, cls).from_pretrained(*args, **kwargs)
-        return config
-
-    def save_pretrained(self, save_directory):
-        """
-        Override the save_pretrained method to include all required configuration 
-        parameters when saving the model's config.
-        """
-        self.save_to_json_file(self.to_dict(), save_directory)
-
-    def to_dict(self):
-        """
-        Return a dictionary with all required attributes for saving.
-        """
-        output = super().to_dict()
-        output.update({
-            "vocab_size": self.vocab_size,
-            "embed_dim": self.embed_dim,
-            "depth": self.depth,
-            "heads": self.heads,
-            "seq_length": self.seq_length,
-            "dropout": self.dropout,
-            "k": self.k,
-        })
-        return output
 
 # ----------------------------
 # Low-Rank Linear Layer Implementation
@@ -302,13 +270,6 @@ class LinformerModel(PreTrainedModel):
 
         return {"loss": loss, "logits": logits}
 
-    def save_pretrained(self, save_directory):
-        """
-        Override save_pretrained to ensure correct behavior when saving the model.
-        """
-        self.config.save_pretrained(save_directory)
-        torch.save(self.state_dict(), f"{save_directory}/pytorch_model.bin")
-
 # ----------------------------
 # Utility Function to Count Parameters
 # ----------------------------
@@ -490,7 +451,7 @@ def main():
         args=training_args,
         train_dataset=combined_dataset,
         data_collator=partial(dynamic_chunking_collator, sequence_length=SEQ_LEN, tokenizer=tokenizer),
-        callbacks=[LossLoggerCallback()],
+        callbacks=[LossLoggerCallback(), DefaultFlowCallback()],
     )
 
     # ----------------------------
@@ -501,12 +462,11 @@ def main():
     trainer.train()
 
     # ----------------------------
-    # Save the Final Model
+    # Save the Final Model and Tokenizer
     # ----------------------------
     
     print("Saving the final model...")
-    trainer.save_model("./final_model")
-    tokenizer.save_pretrained("./final_model")
+    trainer.save_model()
     print("Training complete and model saved.")
 
 # ----------------------------
