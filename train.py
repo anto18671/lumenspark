@@ -15,7 +15,7 @@ class LossLoggerCallback(TrainerCallback):
     A custom callback to log the loss during training, save the plot at regular intervals,
     and evaluate the model by generating text from predefined prompts.
     """
-    def __init__(self, plot_save_path="training_loss_plot.png", plot_interval=512, eval_interval=128, prompts=None, tokenizer=None):
+    def __init__(self, plot_save_path="training_loss_plot.png", plot_interval=256, eval_interval=256, prompts=None, tokenizer=None):
         super().__init__()
         self.losses = []
         self.steps = []
@@ -421,7 +421,7 @@ def count_parameters(model):
 # Data Collator for Dynamic Chunking
 # ----------------------------
 
-def dynamic_chunking_collator(features, sequence_length, tokenizer, delete_prob=0.05, swap_prob=0.05):
+def dynamic_chunking_collator(features, sequence_length, tokenizer):
     """
     Data collator that dynamically samples a chunk from each document,
     applies random delete and swap operations, and tokenizes the text.
@@ -484,8 +484,8 @@ def main():
     # Load OpenWebText dataset
     openwebtext_dataset = load_dataset("openwebtext", split="train", trust_remote_code=True)
 
-    # Load 25% of BookCorpus
-    bookcorpus_dataset = load_dataset("bookcorpus", split="train[:25%]", trust_remote_code=True)
+    # Load 30% of BookCorpus
+    bookcorpus_dataset = load_dataset("bookcorpus", split="train[:30%]", trust_remote_code=True)
 
     # Combine all datasets
     combined_dataset = concatenate_datasets([openwebtext_dataset, bookcorpus_dataset])
@@ -552,13 +552,14 @@ def main():
         weight_decay=WEIGHT_DECAY,
         logging_dir="./logs",
         logging_steps=16,
-        save_steps=1024,
+        save_steps=2048,
         save_total_limit=8,
-        warmup_steps=1024,
+        warmup_steps=512,
         remove_unused_columns=False,
         dataloader_num_workers=16,
         run_name="Linformer-OpenWebText-Training",
         max_grad_norm=1.0,
+        bf16=True,
     )
 
     # ----------------------------
@@ -574,8 +575,8 @@ def main():
         LossLoggerCallback(
             prompts=prompts,
             tokenizer=tokenizer,
-            plot_interval=512,
-            eval_interval=128,
+            plot_interval=256,
+            eval_interval=256,
         )
     ],
     )
