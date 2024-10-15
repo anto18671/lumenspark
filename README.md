@@ -169,7 +169,6 @@ If you find Lumenspark valuable and would like to support its ongoing developmen
 ### Why Sponsor?
 
 - **Sustain Development**: Help maintain and improve Lumenspark.
-- **Exclusive Benefits**: Receive early access to new features and direct support.
 - **Recognition**: Get acknowledged in the project documentation and website.
 
 ### How to Sponsor
