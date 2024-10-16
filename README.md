@@ -2,6 +2,7 @@
 
 This repository contains the code and configuration to use a transformer-based language model built with a custom Linformer architecture. The model is designed to handle long-sequence tasks more efficiently by incorporating a low-rank projection mechanism for attention. This allows scaling the model to longer sequences while maintaining manageable memory and computational requirements.
 
+![PyPI version](https://img.shields.io/pypi/v/lumenspark.svg?cacheSeconds=3600)(https://pypi.org/project/lumenspark/)
 ![License](https://img.shields.io/github/license/anto18671/lumenspark)
 ![GitHub Sponsors](https://img.shields.io/github/sponsors/anto18671)
 
