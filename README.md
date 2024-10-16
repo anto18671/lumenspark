@@ -40,17 +40,19 @@ $$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^\top}{\sqrt{d_k}}\ri
 
    - **LowRankLinear** is used throughout the architecture to reduce dimensionality while maintaining model expressiveness. This is achieved by factorizing the linear transformation into two smaller matrices $U$ and $V$, where: $$W \approx U V^\top$$
 
-   - Here, $U \in \mathbb{R}^{d \times r}$ and $V \in \mathbb{R}^{d \times r}$, where $r$ is the rank of the projection. This reduces the total number of parameters in the projection from $d^2$ to $2dr$, where $r \ll d$.
+   - Here, $U \in \mathbb{R}^{d \times r}$ and $V \in \mathbb{R}^{d \times r}$, where $r$ is the rank of the projection. This reduces the total number of parameters in the projection:
+
+     $d^2$ to $2dr$, where $r \ll d$.
 
    - This method helps in compressing the model, lowering the computational cost of matrix multiplications in dense layers.
 
-3. **Self-Attention Mechanism (Modified):**
+3. **Self-Attention Mechanism:**
 
    - The **SelfAttention** module implements a multi-head self-attention mechanism without low-rank projections in this architecture. Each attention head operates on the input sequence and computes self-attention as in a standard transformer. The attention matrix remains $n \times n$, ensuring full expressivity.
 
    - For each attention head, the queries, keys, and values are computed as follows:
 
-   $$Q = X W_Q, \quad K = X W_K, \quad V = X W_V$$
+     $$Q = X W_Q, \quad K = X W_K, \quad V = X W_V$$
 
    - $X \in \mathbb{R}^{n \times d}$ is the input sequence, and $W_Q, W_K, W_V \in \mathbb{R}^{d \times d}$ are learned projection matrices for queries, keys, and values.
 
