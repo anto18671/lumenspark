@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="lumenspark",
-    version="0.1.2",
+    version="0.1.4",
     description="Lumenspark: A Transformer Model Optimized for Text Generation and Classification with Low Compute and Memory Requirements.",
     long_description=open('README.md').read(),
     long_description_content_type="text/markdown",
@@ -12,7 +12,7 @@ setup(
     license="MIT",
     keywords=["transformers", "deep learning", "NLP", "PyTorch", "machine learning"],
     install_requires=[
-        "torch>=1.8.0",
+        "torch>=2.0.0",
         "transformers>=4.0.0",
     ],
     python_requires=">=3.8",

@@ -1,9 +1,10 @@
 from transformers import Trainer, TrainingArguments, GPT2Tokenizer, TrainerCallback
 from lumenspark import LumensparkConfig, LumensparkModel
-from datasets import load_dataset, concatenate_datasets
+from datasets import load_dataset
 import matplotlib.pyplot as plt
 from functools import partial
 import torch
+import os
 
 # ----------------------------
 # Callback to Log Loss and Evaluate Model
@@ -14,7 +15,7 @@ class CustomCallback(TrainerCallback):
     A custom callback to log the loss during training, save the plot at regular intervals,
     and evaluate the model by generating text from predefined prompts.
     """
-    def __init__(self, plot_save_path="training_loss_plot.png", plot_interval=256, eval_interval=256, prompts=None, tokenizer=None):
+    def __init__(self, plot_save_path="training_loss_plot.png", plot_interval=2048, eval_interval=2048, prompts=None, tokenizer=None):
         super().__init__()
         self.losses = []
         self.steps = []
@@ -75,26 +76,20 @@ class CustomCallback(TrainerCallback):
         This method uses the tokenizer to encode the prompts, and the model to generate responses.
         """
         model.eval()
-        device = next(model.parameters()).device  # Automatically detect the model's device (CPU/GPU)
-
         print("\nEvaluating model by generating text from prompts:")
         for prompt in self.prompts:
-            input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
-
-            with torch.no_grad():  # Disable gradient computation for evaluation
+            with torch.no_grad():
                 output = model.generate(
-                    input_ids, 
-                    max_length=50,
-                    temperature=0.7,
+                    text=prompt,
+                    min_length=24,
+                    max_length=64,
+                    temperature=0.75,
                     top_p=0.9,
                     do_sample=True
                 )
 
-            # Decode the generated text and display it alongside the prompt
-            generated_text = tokenizer.decode(output[0], skip_special_tokens=True)
-
             print(f"\nPrompt: {prompt}")
-            print(f"Generated: {generated_text}")
+            print(f"Generated: {output}")
             print("-" * 50)
 
         print("\nEvaluation complete.\n")
@@ -130,7 +125,7 @@ def dynamic_chunking_collator(features, sequence_length, tokenizer):
     # Tokenize the entire text with truncation and padding
     tokenized = tokenizer(
         texts,
-        padding="max_length",
+        padding=True,
         truncation=True,
         max_length=sequence_length,
         return_tensors="pt"
@@ -154,43 +149,30 @@ def main():
     # Hyperparameters
     # ----------------------------
     
-    SEQ_LEN = 512  # Maximum sequence length for training
-    BATCH_SIZE = 48  # Batch size per device
-    GRADIENT_ACCUMULATION = 10  # Gradient accumulation steps
-    DROPOUT = 0.1  # Dropout rate
-    EMBED_SIZE = 512  # Size of the embeddings
-    NUM_HEADS = 4  # Number of attention heads
-    NUM_LAYERS = 6  # Number of transformer layers
-    VOCAB_SIZE = 50257  # Vocabulary size (for GPT-2 tokenizer)
-    LEARNING_RATE = 1.25e-4  # Learning rate
+    BATCH_SIZE = 15  # Batch size per device
+    GRADIENT_ACCUMULATION = 12  # Gradient accumulation steps
+    LEARNING_RATE = 1e-4  # Learning rate
     WEIGHT_DECAY = 1e-2  # Weight decay for regularization
-    EPOCHS = 4  # Number of training epochs
-    K = 256  # Low-rank projection dimension for Linformer-like attention
+    EPOCHS = 1  # Number of training epochs
+
+    # ----------------------------
+    # Load Dataset (C4)
+    # ----------------------------
+    
+    print("Loading C4 datasets...")
+
+    # Load the English subset of C4
+    dataset = load_dataset("allenai/c4", "en", split="train", num_proc=16)
 
     # ----------------------------
     # Device Configuration
     # ----------------------------
     
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
+    local_rank = int(os.getenv("LOCAL_RANK", -1))
+    device = torch.device(f'cuda:{local_rank}' if torch.cuda.is_available() else 'cpu')
 
-    # ----------------------------
-    # Load Dataset (OpenWebText and BookCorpus)
-    # ----------------------------
-    
-    print("Loading OpenWebText and BookCorpus datasets...")
-
-    # Load OpenWebText dataset
-    openwebtext_dataset = load_dataset("openwebtext", split="train", trust_remote_code=True)
-
-    # Load 30% of BookCorpus
-    bookcorpus_dataset = load_dataset("bookcorpus", split="train[:30%]", trust_remote_code=True)
-
-    # Combine all datasets
-    combined_dataset = concatenate_datasets([openwebtext_dataset, bookcorpus_dataset])
-    
-    # Shuffle the combined dataset
-    combined_dataset = combined_dataset.shuffle(seed=42)
+    # Initialize the process group for DDP (Distributed Data Parallel)
+    torch.distributed.init_process_group(backend="nccl", rank=local_rank)
 
     # ----------------------------
     # Load Tokenizer
@@ -207,18 +189,10 @@ def main():
     # ----------------------------
     
     print("Initializing Lumenspark model...")
-    config = LumensparkConfig(
-        vocab_size=VOCAB_SIZE,
-        embed_dim=EMBED_SIZE,
-        depth=NUM_LAYERS,
-        heads=NUM_HEADS,
-        seq_length=SEQ_LEN,
-        dropout=DROPOUT,
-        k=K,
-    )
+    config = LumensparkConfig()
 
     # Create the Lumenspark model
-    model = LumensparkModel(config).to(device)
+    model = LumensparkModel(config, tokenizer=tokenizer).to(device)
 
     # ----------------------------
     # Count Model Parameters
@@ -253,13 +227,16 @@ def main():
         learning_rate=LEARNING_RATE,
         weight_decay=WEIGHT_DECAY,
         logging_dir="./logs",
-        logging_steps=16,
-        save_steps=2048,
+        logging_steps=32,
+        save_steps=4096,
         save_total_limit=8,
-        warmup_steps=512,
+        warmup_steps=2048,
         remove_unused_columns=False,
-        dataloader_num_workers=16,
+        dataloader_num_workers=6,
         run_name="Lumenspark-OpenWebText-Training",
+        ddp_find_unused_parameters=False,
+        local_rank=local_rank,
+        report_to="none",
         max_grad_norm=1.0,
         bf16=True,
     )
@@ -271,14 +248,14 @@ def main():
     trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=combined_dataset,
-        data_collator=partial(dynamic_chunking_collator, sequence_length=SEQ_LEN, tokenizer=tokenizer),
+        train_dataset=dataset,
+        data_collator=partial(dynamic_chunking_collator, sequence_length=config.seq_length, tokenizer=tokenizer),
         callbacks=[
             CustomCallback(
                 prompts=prompts,
                 tokenizer=tokenizer,
-                plot_interval=256,
-                eval_interval=256,
+                plot_interval=1024,
+                eval_interval=1024,
             )
         ],
     )
@@ -303,5 +280,9 @@ def main():
 # ----------------------------
 
 if __name__ == "__main__":
+    print("CUDA Available:", torch.cuda.is_available())
+    if torch.cuda.is_available():
+        print("GPU Name:", torch.cuda.get_device_name(0))
+
     # Run the main training script
     main()

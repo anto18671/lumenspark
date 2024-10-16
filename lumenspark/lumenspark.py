@@ -1,6 +1,10 @@
-from transformers import PretrainedConfig, PreTrainedModel, GenerationConfig
+from transformers import PretrainedConfig, PreTrainedModel, GPT2Tokenizer
+from huggingface_hub import hf_hub_download
+from safetensors import safe_open
 from torch import nn
 import torch
+import math
+import os
 
 # ----------------------------
 # Define Lumenspark Configuration
@@ -15,13 +19,14 @@ class LumensparkConfig(PretrainedConfig):
 
     def __init__(
         self,
-        seq_length=512,
+        seq_length=768,
         vocab_size=50257,
-        embed_dim=512,
-        depth=6,
-        heads=4,
-        dropout=0.1,
-        k=256,
+        embed_dim=768,
+        depth=8,
+        heads=12,
+        dropout=1/17,
+        k=384,
+        rank=256,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -32,6 +37,7 @@ class LumensparkConfig(PretrainedConfig):
         self.seq_length = seq_length
         self.dropout = dropout
         self.k = k
+        self.rank = rank
 
     def to_dict(self):
         """
@@ -46,7 +52,8 @@ class LumensparkConfig(PretrainedConfig):
             "heads": self.heads,
             "seq_length": self.seq_length,
             "dropout": self.dropout,
-            "k": self.k
+            "k": self.k,
+            "rank": self.rank,
         })
         return output
 
@@ -59,10 +66,12 @@ class LowRankLinear(nn.Module):
     A low-rank linear layer that factorizes a standard linear layer into two smaller ones.
     This allows for reduced parameter count and faster computation.
     """
-    def __init__(self, in_features, out_features, rank):
+    def __init__(self, in_features, out_features, rank, init_std=0.02):
         super().__init__()
         self.U = nn.Linear(in_features, rank, bias=False)
         self.V = nn.Linear(rank, out_features, bias=False)
+        nn.init.normal_(self.U.weight, std=init_std)
+        nn.init.normal_(self.V.weight, std=init_std)
 
     def forward(self, x):
         """
@@ -77,139 +86,92 @@ class LowRankLinear(nn.Module):
 class LumensparkSelfAttention(nn.Module):
     """
     Custom self-attention mechanism for the Lumenspark model.
-    It includes low-rank approximations to reduce computational cost and memory usage.
+    It uses low-rank approximations to reduce computational cost and memory usage.
     """
-    def __init__(self, embed_dim, max_seq_len, proj_dim, num_heads, head_dim=None, single_kv_head=True, shared_kv=True, dropout=0.1):
+    def __init__(self, embed_dim, num_heads, head_dim=None, dropout=0.0):
         super().__init__()
         assert (embed_dim % num_heads) == 0, 'Embedding dimension must be divisible by the number of heads'
 
-        self.max_seq_len = max_seq_len
-        self.proj_dim = proj_dim
         self.num_heads = num_heads
         self.embed_dim = embed_dim
-
-        # Set the dimensionality of each attention head
         self.head_dim = head_dim if head_dim is not None else embed_dim // num_heads
 
-        # Query transformation: Low-rank projection followed by linear layer
-        self.query_transform = nn.Sequential(
-            LowRankLinear(embed_dim, embed_dim // 2, rank=32),
-            nn.Linear(embed_dim // 2, self.head_dim * num_heads)
-        )
-        kv_size = self.head_dim if single_kv_head else (self.head_dim * num_heads)
-        self.key_transform = nn.Linear(embed_dim, kv_size, bias=False)
-        self.key_proj = nn.Parameter(self.initialize_proj_matrix(max_seq_len, proj_dim))
-
-        # Shared key-value projection option
-        self.shared_kv = shared_kv
-        if not shared_kv:
-            self.value_transform = nn.Linear(embed_dim, kv_size, bias=False)
-            self.value_proj = nn.Parameter(self.initialize_proj_matrix(max_seq_len, proj_dim))
+        # Query, Key and Value transformations using LowRankLinear
+        self.q_proj = nn.Linear(embed_dim, self.head_dim * num_heads)
+        self.k_proj = nn.Linear(embed_dim, self.head_dim * num_heads)
+        self.v_proj = nn.Linear(embed_dim, self.head_dim * num_heads)
 
         self.dropout_layer = nn.Dropout(dropout)
         self.output_transform = nn.Linear(self.head_dim * num_heads, embed_dim)
 
-    def initialize_proj_matrix(self, rows, cols):
-        """
-        Initializes the projection matrix used to reduce the sequence length for key/value pairs.
-        """
-        return torch.nn.init.xavier_uniform_(torch.zeros(rows, cols))
-
-    def forward(self, inputs, context_data=None, **kwargs):
-        """
-        Forward pass of the self-attention mechanism.
-        """
+    def stable_softmax(self, x, dim=-1):
+        # Subtract max for numerical stability
+        x_max = torch.max(x, dim=dim, keepdim=True)[0]
+        exp_x = torch.exp(x - x_max)
+        return exp_x / (torch.sum(exp_x, dim=dim, keepdim=True) + 1e-6)
+    
+    def forward(self, inputs, attention_mask=None):
         batch_size, seq_len, _ = inputs.shape
-        kv_seq_len = inputs.shape[1] if context_data is None else context_data.shape[1]
-        assert kv_seq_len <= self.max_seq_len, f'Key/value sequence length exceeds the max sequence length: {self.max_seq_len}'
 
-        # Apply transformations to queries, keys, and values
-        queries = self.query_transform(inputs)
-        kv_inputs = inputs if context_data is None else context_data
-        keys = self.key_transform(kv_inputs)
-        values = self.value_transform(kv_inputs) if not self.shared_kv else keys
+        q = self.q_proj(inputs).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        k = self.k_proj(inputs).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        v = self.v_proj(inputs).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
-        # Apply projection matrix to keys and values
-        keys = torch.einsum('bnd,nk->bkd', keys, self.key_proj[:kv_seq_len])
-        values = torch.einsum('bnd,nk->bkd', values, self.value_proj[:kv_seq_len] if not self.shared_kv else self.key_proj[:kv_seq_len])
-
-        # Reshape queries, keys, and values for multi-head attention
-        queries = queries.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        keys = keys.view(batch_size, self.proj_dim, -1, self.head_dim).transpose(1, 2)
-        values = values.view(batch_size, self.proj_dim, -1, self.head_dim).transpose(1, 2)
-
-        # Compute scaled dot-product attention
-        attention_scores = torch.einsum('bhnd,bhkd->bhnk', queries, keys) * (self.head_dim ** -0.5)
-        attention_weights = attention_scores.softmax(dim=-1)
+        attention_scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
+        
+        if attention_mask is not None:
+            attention_scores = attention_scores.masked_fill(attention_mask == 0, float('-inf'))
+        
+        attention_weights = self.stable_softmax(attention_scores, dim=-1)
         attention_weights = self.dropout_layer(attention_weights)
 
-        # Apply attention weights to values and compute output
-        attention_output = torch.einsum('bhnk,bhkd->bhnd', attention_weights, values)
+        attention_output = torch.matmul(attention_weights, v)
         attention_output = attention_output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.embed_dim)
         return self.output_transform(attention_output)
-    
-# ----------------------------
-# RMSNorm Layer Implementation
-# ----------------------------
-
-class RMSNorm(nn.Module):
-    """
-    Root Mean Square Layer Normalization (RMSNorm) without affine transformation.
-    This normalization technique scales the input without centering it.
-    """
-    def __init__(self, embed_dim, eps=1e-6):
-        super().__init__()
-        self.eps = eps  # Small constant to prevent division by zero
-        self.scale = nn.Parameter(torch.ones(embed_dim))  # Scaling factor
-
-    def forward(self, x):
-        """
-        Forward pass through the RMSNorm layer.
-        """
-        norm_x = x.norm(2, dim=-1, keepdim=True)
-        rms_x = norm_x / (x.size(-1) ** 0.5)  # Root mean square normalization
-        return self.scale * x / (rms_x + self.eps)
 
 # ----------------------------
 # Define Lumenspark Model Wrapper
 # ----------------------------
 
 class LumensparkModel(PreTrainedModel):
-    """
-    Lumenspark model with factorized linear projections, multi-head attention, and RMSNorm for normalization.
-    This model is specifically designed to handle long sequences efficiently.
-    """
     config_class = LumensparkConfig
 
-    def __init__(self, config):
+    def __init__(self, config, tokenizer):
         super().__init__(config)
         self.config = config
+        self.tokenizer = tokenizer
 
         # Token and position embeddings
         self.token_embedding = nn.Embedding(config.vocab_size, config.embed_dim)
         self.position_embedding = nn.Embedding(config.seq_length, config.embed_dim)
 
-        # Lumenspark transformer encoder layers
-        self.layers = nn.ModuleList([nn.ModuleDict({
-            "attn": LumensparkSelfAttention(
-                embed_dim=config.embed_dim,
-                max_seq_len=config.seq_length,
-                num_heads=config.heads,
-                proj_dim=config.k,
-                head_dim=config.embed_dim // config.heads,
-                single_kv_head=True,
-                shared_kv=True,
-                dropout=config.dropout
-            ),
-            "norm1": RMSNorm(config.embed_dim),
-            "ffn": nn.Sequential(
-                LowRankLinear(config.embed_dim, config.embed_dim // 2, rank=32),
-                nn.GELU(),
-                LowRankLinear(config.embed_dim // 2, config.embed_dim, rank=32),
-                nn.Dropout(config.dropout)
-            ),
-            "norm2": RMSNorm(config.embed_dim)
-        }) for _ in range(config.depth)])
+        # Lumenspark transformer encoder layers with prenormalization and LayerScale
+        self.layers = nn.ModuleList()
+        for _ in range(config.depth):
+            layer = nn.ModuleDict({
+                "norm1": nn.LayerNorm(config.embed_dim),
+                "attn": LumensparkSelfAttention(
+                    embed_dim=config.embed_dim,
+                    num_heads=config.heads,
+                    head_dim=config.embed_dim // config.heads,
+                    dropout=config.dropout
+                ),
+                "norm2": nn.LayerNorm(config.embed_dim),
+                "ffn": nn.Sequential(
+                    LowRankLinear(config.embed_dim, config.embed_dim * 4, rank=config.rank),
+                    nn.GELU(),
+                    nn.Dropout(config.dropout),
+                    LowRankLinear(config.embed_dim * 4, config.embed_dim, rank=config.rank),
+                    nn.Dropout(config.dropout)
+                ),
+            })
+            # Assign the parameters directly as attributes
+            layer.layer_scale_attn = nn.Parameter(torch.ones(config.embed_dim) * 1e-2)
+            layer.layer_scale_ffn = nn.Parameter(torch.ones(config.embed_dim) * 1e-2)
+            self.layers.append(layer)
+
+        # Final LayerNorm layer
+        self.final_norm = nn.LayerNorm(config.embed_dim)
 
         # Feed-forward output layer
         self.fc_out = nn.Linear(config.embed_dim, config.vocab_size)
@@ -218,12 +180,36 @@ class LumensparkModel(PreTrainedModel):
         # Initialize model weights
         self.init_weights()
 
-        # Create GenerationConfig instance for text generation
-        self.generation_config = GenerationConfig(
-            max_length=128,
-            min_length=16,
-        )
+    @classmethod
+    def from_pretrained(cls, model_id, cache_dir=None, **kwargs):
+        """
+        Downloads the pretrained weights from Hugging Face, and loads the GPT-2 tokenizer.
+        """
+        # Set cache directory for storing models
+        cache_dir = cache_dir or os.path.join(os.getcwd(), "lumenspark_weights")
 
+        # Download model weights in `.safetensors` format
+        weight_path = hf_hub_download(repo_id=model_id, filename="model.safetensors", cache_dir=cache_dir)
+
+        # Load the configuration
+        config_path = hf_hub_download(repo_id=model_id, filename="config.json", cache_dir=cache_dir)
+        config = LumensparkConfig.from_json_file(config_path)
+
+        # Load GPT-2 tokenizer directly from Hugging Face
+        tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+
+        # Instantiate the model
+        model = cls(config, tokenizer=tokenizer)
+
+        # Load state_dict from safetensors file
+        with safe_open(weight_path, framework="pt") as f:
+            state_dict = {k: f.get_tensor(k) for k in f.keys()}
+
+        model.load_state_dict(state_dict)
+
+        return model
+
+    @staticmethod
     def top_k_top_p_filtering(logits, top_k=0, top_p=1.0, filter_value=-float('Inf')):
         """
         Filter a distribution of logits using top-k and/or top-p filtering.
@@ -245,14 +231,22 @@ class LumensparkModel(PreTrainedModel):
             logits[:, indices_to_remove] = filter_value
         return logits
 
-    def generate(self, input_ids, max_length=128, min_length=16, temperature=0.6, top_k=50, top_p=0.9, repetition_penalty=1.1, do_sample=True):
+    def generate(self, text, max_length=160, min_length=20, temperature=0.6, top_k=50, top_p=0.9, repetition_penalty=1.1, do_sample=True):
         """
         Text generation method that handles auto-regressive generation with repetition penalty.
+        The input is a string, and the output is a string generated by the model.
         """
+        self.eval()  # Set model to evaluation mode
+        # Tokenize input text using GPT-2 tokenizer
+        input_ids = torch.tensor([self.tokenizer.encode(text)], dtype=torch.long).to(self.device)
+
+        # Initialize attention mask
+        attention_mask = torch.ones_like(input_ids).to(self.device)
+
         generated_tokens = input_ids
 
         for _ in range(max_length - input_ids.size(1)):
-            outputs = self.forward(input_ids=generated_tokens)
+            outputs = self.forward(input_ids=generated_tokens, attention_mask=attention_mask)
             logits = outputs["logits"][:, -1, :]
 
             # Adjust temperature for randomness
@@ -272,12 +266,21 @@ class LumensparkModel(PreTrainedModel):
 
             # Append the generated token
             generated_tokens = torch.cat((generated_tokens, next_token), dim=1)
+            # Update attention mask
+            attention_mask = torch.ones_like(generated_tokens).to(self.device)
 
-            # Stop if the EOS token is generated
-            if next_token.item() == self.config.eos_token_id:
+            # Prevent early stopping by ensuring min_length is reached before allowing EOS
+            if next_token.item() == self.tokenizer.eos_token_id and generated_tokens.size(1) < min_length:
+                continue  # Skip EOS if output is too short
+
+            # Stop if the EOS token is generated and minimum length is reached
+            if next_token.item() == self.tokenizer.eos_token_id:
                 break
 
-        return generated_tokens
+        # Decode the generated tokens back to text
+        generated_text = self.tokenizer.decode(generated_tokens[0].tolist())
+
+        return generated_text
 
     def forward(self, input_ids, attention_mask=None, labels=None):
         """
@@ -297,14 +300,34 @@ class LumensparkModel(PreTrainedModel):
         embeddings = token_embeddings + position_embeddings
         embeddings = self.dropout(embeddings)
 
-        # Pass through each transformer layer
-        for layer in self.layers:
-            embeddings = layer["attn"](embeddings) + embeddings
-            embeddings = layer["norm1"](embeddings)
+        # Create causal mask
+        device = embeddings.device
+        causal_mask = torch.tril(torch.ones((seq_length, seq_length), device=device)).unsqueeze(0).unsqueeze(0)
 
-            ffn_out = layer["ffn"](embeddings)
-            embeddings = ffn_out + embeddings
-            embeddings = layer["norm2"](embeddings)
+        # Combine with attention mask if provided
+        if attention_mask is not None:
+            # Expand attention_mask to match dimensions
+            attention_mask = attention_mask[:, None, None, :].float()
+            combined_mask = attention_mask * causal_mask
+        else:
+            combined_mask = causal_mask
+
+        # Pass through each transformer layer with prenormalization and LayerScale
+        for layer in self.layers:
+            # Prenormalization before self-attention
+            embeddings_norm = layer["norm1"](embeddings)
+            attn_output = layer["attn"](embeddings_norm, attention_mask=combined_mask)
+            # Apply LayerScale for attention output
+            embeddings = embeddings + layer.layer_scale_attn * attn_output
+
+            # Prenormalization before feed-forward network
+            embeddings_norm = layer["norm2"](embeddings)
+            ffn_output = layer["ffn"](embeddings_norm)
+            # Apply LayerScale for feed-forward output
+            embeddings = embeddings + layer.layer_scale_ffn * ffn_output
+
+        # Apply final LayerNorm before output
+        embeddings = self.final_norm(embeddings)
 
         # Compute logits (unnormalized scores)
         logits = self.fc_out(embeddings)
@@ -317,15 +340,6 @@ class LumensparkModel(PreTrainedModel):
 
             # Base cross-entropy loss
             loss_fct = nn.CrossEntropyLoss()
-            base_loss = loss_fct(shift_logits, shift_labels)
-
-            # Repetition penalty
-            rep_penalty = 0
-            for i in range(batch_size):
-                token_counts = torch.bincount(input_ids[i].view(-1))
-                rep_penalty += (token_counts > 1).sum().float()
-
-            # Add repetition penalty to the loss
-            loss = base_loss + (0.01 * rep_penalty)
+            loss = loss_fct(shift_logits, shift_labels)
 
         return {"loss": loss, "logits": logits}
