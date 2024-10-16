@@ -134,25 +134,22 @@ This will install the Linformer-based language model and its dependencies.
 After installing the package, you can easily load the pre-trained model and tokenizer from Hugging Face to generate text.
 
 ```python
-from lumenspark import LumensparkConfig, LumensparkModel
-from transformers import AutoTokenizer
+from lumenspark import LumensparkModel
+import torch
 
-# Load the configuration and model from Hugging Face
-config = LumensparkConfig.from_pretrained("anto18671/lumenspark")
-model = LumensparkModel.from_pretrained("anto18671/lumenspark", config=config)
+# 1. Set up the device (GPU if available, else CPU)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
 
-# Load the tokenizer
-tokenizer = AutoTokenizer.from_pretrained("anto18671/lumenspark")
+# 2. Load the model and move it to the device
+model = LumensparkModel.from_pretrained("anto18671/lumenspark").to(device)
 
-# Example input text
+# 3. Example input text
 input_text = "Once upon a time"
 
-# Tokenize the input text
-inputs = tokenizer(input_text, return_tensors="pt")
-
-# Generate text
-output = model.generate(
-    **inputs,
+# 4. Generate text
+output_text = model.generate(
+    input_text,
     max_length=100,        # Maximum length of the generated sequence
     temperature=0.7,       # Controls randomness in predictions
     top_k=50,              # Top-k sampling to filter high-probability tokens
@@ -160,8 +157,8 @@ output = model.generate(
     repetition_penalty=1.2 # Penalize repetition
 )
 
-# Decode and print the generated text
-print(tokenizer.decode(output[0], skip_special_tokens=True))
+# 5. Print the generated text
+print(output_text)
 ```
 
 This example demonstrates loading the model and tokenizer, and generating a text sequence based on an initial prompt.
