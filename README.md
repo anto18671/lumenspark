@@ -111,7 +111,7 @@ The model architecture is highly configurable through several hyperparameters:
 
 - **`k`**: The projection dimension for the low-rank attention (default: 384).
 
-- **`rank`**: Defines the reduced dimensionality for low-rank projections in attention, optimizing computational efficiency.
+- **`rank`**: Defines the reduced dimensionality for low-rank projections in attention (default: 256).
 
 ---
 
