@@ -162,6 +162,22 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
 
 This example demonstrates loading the model and tokenizer, and generating a text sequence based on an initial prompt.
 
+## Sponsorship
+
+If you find Lumenspark valuable and would like to support its ongoing development, consider becoming a sponsor!
+
+### Why Sponsor?
+
+- **Sustain Development**: Help maintain and improve Lumenspark.
+- **Exclusive Benefits**: Receive early access to new features and direct support.
+- **Recognition**: Get acknowledged in the project documentation and website.
+
+### How to Sponsor
+
+Click the [Sponsor](https://github.com/sponsors/anto18671) button above or visit [GitHub Sponsors](https://github.com/sponsors/anto18671) to choose a sponsorship tier that suits you.
+
+Thank you for your support!
+
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
