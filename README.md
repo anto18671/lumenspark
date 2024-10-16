@@ -32,7 +32,7 @@ The core of this project revolves around a **Linformer-based Transformer archite
      - $K \in \mathbb{R}^{n \times d}$ are the keys,
      - $V \in \mathbb{R}^{n \times d}$ are the values, and
      - $d_k$ is the dimension of the keys/queries.
-     - Linformer modifies this by introducing a projection matrix $P \in \mathbb{R}^{n \times k}$, reducing the dimension of $K$ and $V$:
+     - Linformer modifies this by introducing a projection matrix $P \in \mathbb{R}^{n \times k}$, reducing the dimension of $K$ and $V$
        $$K' = K P, \quad V' = V P$$
 
 $$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^\top}{\sqrt{d_k}}\right)V$$
