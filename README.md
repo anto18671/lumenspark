@@ -32,7 +32,8 @@ The core of this project revolves around a **Linformer-based Transformer archite
      - $K \in \mathbb{R}^{n \times d}$ are the keys,
      - $V \in \mathbb{R}^{n \times d}$ are the values, and
      - $d_k$ is the dimension of the keys/queries.
-     - Linformer modifies this by introducing a projection matrix $P \in \mathbb{R}^{n \times k}$, reducing the dimension of $K$ and $V$: $$K' = K P, \quad V' = V P$$
+     - Linformer modifies this by introducing a projection matrix $P \in \mathbb{R}^{n \times k}$, reducing the dimension of $K$ and $V$:
+       $$K' = K P, \quad V' = V P$$
 
 $$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^\top}{\sqrt{d_k}}\right)V$$
 
@@ -40,9 +41,7 @@ $$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^\top}{\sqrt{d_k}}\ri
 
    - **LowRankLinear** is used throughout the architecture to reduce dimensionality while maintaining model expressiveness. This is achieved by factorizing the linear transformation into two smaller matrices $U$ and $V$, where: $$W \approx U V^\top$$
 
-   - Here, $U \in \mathbb{R}^{d \times r}$ and $V \in \mathbb{R}^{d \times r}$, where $r$ is the rank of the projection. This reduces the total number of parameters in the projection:
-
-     $d^2$ to $2dr$, where $r \ll d$.
+   - Here, $U \in \mathbb{R}^{d \times r}$ and $V \in \mathbb{R}^{d \times r}$, where $r$ is the rank of the projection. This reduces the total number of parameters in the projection.
 
    - This method helps in compressing the model, lowering the computational cost of matrix multiplications in dense layers.
 
