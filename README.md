@@ -21,94 +21,65 @@ Lumenspark uses a custom transformer architecture with low-rank approximations. 
 
 ### Key Design Principles
 
-1.  **Low-Rank Linear Projections:**
+1. **Low-Rank Linear Projections:**
 
-    - Lumenspark uses **LowRankLinear** layers throughout the architecture to reduce the dimensionality of matrix multiplications.
-    - A typical matrix multiplication:
+   - Lumenspark uses **LowRankLinear** layers throughout the architecture to reduce the dimensionality of matrix multiplications.
+   - A typical matrix multiplication is approximated as follows:
 
-           $$
-           W \in \mathbb{R}^{d 	imes d}
-           $$
+     - $W \in \mathbb{R}^{d 	imes d}$ is approximated by two smaller matrices:
+     - $U \in \mathbb{R}^{d 	imes r}$ and $V \in \mathbb{R}^{d 	imes r}$
+     - where $r$ is the rank of the projection.
+     - This reduces the parameter count from $d^2$ to $2dr$, allowing for more efficient computation.
 
-           is approximated using two smaller matrices:
+     $$W pprox U V^	op$$
 
-           $$
-           U \in \mathbb{R}^{d 	imes r} 	ext{ and } V \in \mathbb{R}^{d 	imes r}
-           $$
+2. **Self-Attention with Low-Rank Projections:**
 
-           where $r$ is the rank of the projection. This reduces the parameter count significantly:
+   - In the standard transformer, the self-attention is computed as:
+     - $Q \in \mathbb{R}^{n 	imes d}$ are the queries,
+     - $K \in \mathbb{R}^{n 	imes d}$ are the keys,
+     - $V \in \mathbb{R}^{n 	imes d}$ are the values, and
+     - $d_k$ is the dimension of the keys/queries.
+   - Lumenspark modifies this by introducing a projection matrix:
 
-           $$
-           W pprox U V^	op
-           $$
+     - $P \in \mathbb{R}^{n 	imes k}$ to reduce the dimensionality of $K$ and $V$:
 
-           Parameter count reduction:
+     $$K' = K P, \quad V' = V P$$
 
-           $$
-           d^2
+   - This reduces the computational cost of attention from quadratic $O(n^2d)$ to linear $O(nkd)$.
 
-      ightarrow 2dr
-      $$
+   The attention mechanism is then computed as:
 
-2.  **Self-Attention with Low-Rank Projections:**
+   $$
+   	ext{Attention}(Q, K, V) = 	ext{softmax}\left(rac{Q K^	op}{\sqrt{d_k}}
+   ight)V
+   $$
 
-    - **LumensparkSelfAttention** module implements a multi-head self-attention mechanism where low-rank approximations are applied to both the key and value projections, reducing the quadratic complexity of the attention mechanism to linear.
-    - In standard attention:
+3. **Prenormalization and LayerScale:**
 
-           $$
-           Q = X W_Q, \quad K = X W_K, \quad V = X W_V
-           $$
+   - Lumenspark employs **prenormalization** and **LayerScale** in its transformer layers:
 
-           $$
-           	ext{Attention}(Q, K, V) = 	ext{softmax}\left(rac{Q K^	op}{\sqrt{d_k}}
+     - **Prenormalization** applies layer normalization before the attention and feed-forward network (FFN) to stabilize training.
+     - **LayerScale** adds learnable scaling parameters to the output of each attention and FFN module:
 
-      ight)V
+     $$H = H + 	ext{LayerScale}_	ext{attn} \cdot 	ext{Attention}(H)$$
 
-      $$
-      $$
+     $$H = H + 	ext{LayerScale}_	ext{ffn} \cdot 	ext{FFN}(H)$$
 
-    - With Lumenspark's low-rank modification, the keys and values are projected:
+4. **Factorized Feed-Forward Layers:**
 
-      $$
-      K' = K P, \quad V' = V P
-      $$
+   - In each transformer block, the **Feed-Forward Network (FFN)** is factorized using **LowRankLinear** projections:
 
-      $$
-      	ext{where } P \in \mathbb{R}^{n 	imes k}
-      $$
+     - The FFN projects the input $H$ into a higher dimension using $W_1$, applies a **GELU** activation, and projects it back to the original dimension using $W_2$:
 
-    - This reduces computational cost to:
+     $$ ext{FFN}(H) = W_2 \, ext{GELU}(W_1 H)$$
 
-      $$
-      O(nkd)
-      $$
+     - Both $W_1$ and $W_2$ are factorized to reduce the number of parameters.
 
-3.  **Prenormalization and LayerScale:**
+5. **Dropout and Residual Connections:**
 
-    - Lumenspark employs **prenormalization** and **LayerScale** techniques in its transformer layers. Prenormalization applies layer normalization before attention and feed-forward networks, ensuring stable gradients during training.
-    - LayerScale introduces learnable scaling parameters for both the attention and feed-forward layers:
-
-      $$
-      H = H + 	ext{LayerScale}_	ext{attn} \cdot 	ext{Attn}(H)
-      $$
-
-      $$
-      H = H + 	ext{LayerScale}_	ext{ffn} \cdot 	ext{FFN}(H)
-      $$
-
-4.  **Factorized Feed-Forward Layers:**
-
-    - The feed-forward layers in each transformer block are also factorized using **LowRankLinear** to further reduce the number of parameters:
-
-      $$
-      	ext{FFN}(H) = W_2 \, 	ext{GELU}(W_1 H)
-      $$
-
-      where $W_1$ and $W_2$ are low-rank projections.
-
-5.  **Dropout and Residual Connections:**
-
-    - **Dropout** is applied after each attention and feed-forward layer to prevent overfitting, and **residual connections** are used throughout the model to improve gradient flow.
+   - **Dropout** is applied after the attention and FFN layers to prevent overfitting.
+   - **Residual connections** are used throughout to ensure gradient flow and prevent vanishing gradients.
 
 ---
 
@@ -116,23 +87,23 @@ Lumenspark uses a custom transformer architecture with low-rank approximations. 
 
 1. **Token and Positional Embeddings:**
 
-   - Lumenspark uses learned **token embeddings** and **positional embeddings**, which are summed together to create input embeddings for the transformer layers:
+   - Lumenspark uses learned **token embeddings** and **positional embeddings**.
+   - These embeddings are combined and fed into the transformer layers:
 
-     $$
-     E(x_i) = E_{	ext{token}}(x_i) + E_{	ext{position}}(i)
-     $$
+     $$E(x_i) = E_{	ext{token}}(x_i) + E_{	ext{position}}(i)$$
 
 2. **Self-Attention Module:**
 
-   - Each transformer block includes a multi-head self-attention module with low-rank projections applied to the keys and values. This reduces memory consumption while maintaining attention effectiveness.
+   - Each transformer block includes a multi-head self-attention module with low-rank projections applied to the keys and values, reducing memory consumption while maintaining performance.
 
 3. **Feed-Forward Network (FFN):**
 
-   - Each block contains a factorized FFN, which applies GELU activation between low-rank linear projections.
+   - The **FFN** within each block applies GELU activation between low-rank projections, with factorized layers to further reduce parameter count.
 
 4. **Layer Normalization and LayerScale:**
 
-   - Layer normalization is applied before each self-attention and FFN, and LayerScale parameters are used to scale the outputs of each submodule.
+   - **Layer normalization** is applied before each self-attention and FFN module.
+   - **LayerScale** parameters are applied to the outputs of attention and FFN modules to modulate the layer outputs.
 
 ---
 
