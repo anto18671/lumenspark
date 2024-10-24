@@ -173,11 +173,6 @@ We would like to extend our gratitude to [RunPod](https://www.runpod.io) for the
 
 If you find Lumenspark valuable and would like to support its ongoing development, consider becoming a sponsor!
 
-### Why Sponsor?
-
-- **Sustain Development**: Help maintain and improve Lumenspark.
-- **Recognition**: Get acknowledged in the project documentation and website.
-
 ### How to Sponsor
 
 Click the [Sponsor](https://github.com/sponsors/anto18671) button above or visit [GitHub Sponsors](https://github.com/sponsors/anto18671) to choose a sponsorship tier that suits you.
