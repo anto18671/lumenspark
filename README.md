@@ -163,6 +163,12 @@ print(output_text)
 
 This example demonstrates loading the model and tokenizer, and generating a text sequence based on an initial prompt.
 
+## Acknowledgements
+
+We would like to extend our gratitude to [RunPod](https://www.runpod.io) for their generous sponsorship, supporting the training and development of Lumenspark. Their contribution has been instrumental in pushing the project forward.
+
+![RunPod Logo](assets/RunPod.webp)
+
 ## Sponsorship
 
 If you find Lumenspark valuable and would like to support its ongoing development, consider becoming a sponsor!
